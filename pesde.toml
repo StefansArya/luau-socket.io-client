@@ -1,0 +1,20 @@
+name = "stefansarya/luau-socket.io-client"
+version = "0.1.0"
+authors = ["stefansarya"]
+license = "MIT"
+includes = [
+  "pesde.toml",
+  "README.md",
+  "LICENSE",
+  "dist/*.lua",
+]
+
+[target]
+environment = "luau"
+lib = "dist/socketio.lua"
+
+[indices]
+default = "https://github.com/pesde-pkg/index"
+
+[wally_indices]
+default = "https://github.com/UpliftGames/wally-index"

@@ -1,0 +1,8 @@
+{
+	"scripts": {
+		"start": "node ./tools/bundler.js ./src ./dist/socketio.lua",
+		"compile": "node ./tools/bundler.js ./src ./dist/socketio.lua --compile",
+		"test-lune": "lune run ./example/socketio_example.lua"
+	},
+	"dependencies":{"chokidar":"^4.0.3"}
+}

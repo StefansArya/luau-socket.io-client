@@ -23,6 +23,39 @@ else
 	isLune = true
 end
 
+-- Utility methods
+local robloxJSONDep = nil
+local luneJSONDep = nil
+local function encodeJSON(data)
+	if isRoblox then
+		if robloxJSONDep == nil then robloxJSONDep = game:GetService("HttpService") end
+		return robloxJSONDep:JSONEncode(data)
+	else
+		if luneJSONDep == nil then luneJSONDep = require("@lune/serde") end
+		return luneJSONDep.encode("json", data)
+	end
+end
+
+local function decodeJSON(json)
+	local success, result = pcall(function()
+		if isRoblox then
+			if robloxJSONDep == nil then robloxJSONDep = game:GetService("HttpService") end
+			return robloxJSONDep:JSONDecode(json)
+		else
+			if luneJSONDep == nil then luneJSONDep = require("@lune/serde") end
+				return luneJSONDep.decode("json", json)
+		end
+	end)
+
+	if success then
+		return result
+	else
+		print("[Error] ", result, json)
+		error("JSON decode error")
+		return nil
+	end
+end
+
 -- Environment detection
 local function detectEnvironment()
 	if isRoblox then return "roblox"
@@ -80,19 +113,29 @@ local function createHTTPRequestHandler()
 				conn:write(craft)
 
 				local response = conn:read()
+				local contentLength = tonumber(response:match("[Cc]ontent%-[Ll]ength:%s*([0-9]+)"))
+				local responseBody = response:match("\r\n\r\n(.*)$")
+				while #responseBody < contentLength do
+					local data = conn:read()
+					if data ~= nil and #data ~= 0 then
+						responseBody ..= data
+					else
+						print("Waiting HTTP response from remote...")
+					end
+				end
 				conn:close()
 				-- print(craft)
 
 				local statusCode = tonumber(response:match("HTTP/[^ ]+ ([0-9]+)"))
 				if statusCode == 200 then
-					-- print(body .. ' -- ' .. response:match("\r\n\r\n(.*)$"))
-				 	callback(nil, {
-				 		statusCode = statusCode,
-				 		body = response:match("\r\n\r\n(.*)$"),
-				 		headers = nil
-				 	})
+					-- print(body .. ' -- ' .. responseBody)
+					callback(nil, {
+						statusCode = statusCode,
+						body = responseBody,
+						headers = nil
+					})
 				else
-				 	callback("Request failed: " .. response, nil)
+					callback("Request failed: " .. responseBody, nil)
 				end
 			end
 		}
@@ -142,14 +185,18 @@ function SocketIO.new(url, options)
 		message = {},
 	}
 
-	-- Queue for messages when not connected or avoiding rate limit
-	self.messageQueue = {}
+	-- Queue for messages when not connected or throttle data transmission
+	self.messageQueue = nil
 
 	-- Reconnection state
 	self.reconnectionAttempts = 0
 	self.maxReconnectionAttempts = self.options.maxReconnectionAttempts or 5
 	self.reconnectionDelay = self.options.reconnectionDelay or 1000
 	self.reconnectionDelayMax = self.options.reconnectionDelayMax or 5000
+
+	-- Our custom config
+	self.pollingTime = options.pollingTime or SocketIO.pollingTime
+	self.throttleDataSend = options.throttleDataSend or SocketIO.throttleDataSend
 
 	return self
 end
@@ -190,23 +237,13 @@ function SocketIO:emit(event, data, ack)
 		pendingAckTable[ackId] = ack
 	end
 
-	if not self.connected then
-		-- Queue the message for later sending
-		table.insert(self.messageQueue, {
-			type = TYPES.EVENT,
-			data = { event, data },
-			id = ackId
-		})
-		return self
-	end
-
-	local payload = {
+	-- Queue the message for later sending
+	if self.messageQueue == nil then self.messageQueue = {} end
+	table.insert(self.messageQueue, {
 		type = TYPES.EVENT,
 		data = { event, data },
 		id = ackId
-	}
-
-	self:sendPacket(payload)
+	})
 	return self
 end
 
@@ -348,7 +385,7 @@ function SocketIO:pollingPoll()
 	end)
 end
 
-function stringSplit(str, delimiter)
+local function stringSplit(str, delimiter)
 	local result = {}
 	for match in str:gmatch("([^" .. delimiter .. "]+)") do
 		table.insert(result, match)
@@ -403,7 +440,8 @@ function SocketIO:handleConnect(data)
 	self:startPolling()
 
 	-- Send queued messages
-	self:sendQueuedMessages()
+	self:startMessageQueue()
+	-- self:sendQueuedMessages()
 
 	self:trigger("connect")
 end
@@ -466,23 +504,31 @@ end
 
 -- Message queuing
 function SocketIO:sendQueuedMessages()
-	if #self.messageQueue ~= 0 then
+	if self.messageQueue ~= nil then
 		local temp = self.messageQueue
-		self.messageQueue = {}
-
+		self.messageQueue = nil
 		self:sendPackets(temp)
 	end
 end
 
 -- Polling loop using Timer
-function SocketIO:startPolling()
+function SocketIO:startPolling() -- For getting message from server
 	if self.pollingTimer then
 		Timer.clearInterval(self.pollingTimer)
 	end
 
 	self.pollingTimer = Timer.setInterval(function()
 		if self.connected then self:pollingPoll() end
-	end, SocketIO.pollingTime)
+	end, self.pollingTime)
+end
+function SocketIO:startMessageQueue() -- For sending out queued message to server
+	if self.dataSendThrottleTimer then
+		Timer.clearInterval(self.dataSendThrottleTimer)
+	end
+
+	self.dataSendThrottleTimer = Timer.setInterval(function()
+		if self.connected then self:sendQueuedMessages() end
+	end, self.throttleDataSend)
 end
 
 -- Heartbeat using Timer
@@ -505,6 +551,10 @@ function SocketIO:handleConnectionError(err)
 	if self.pollingTimer then
 		Timer.clearInterval(self.pollingTimer)
 		self.pollingTimer = nil
+	end
+	if self.dataSendThrottleTimer then
+		Timer.clearInterval(self.dataSendThrottleTimer)
+		self.dataSendThrottleTimer = nil
 	end
 
 	if self.heartbeatTimer then
@@ -540,29 +590,6 @@ function SocketIO:reconnectAttempt()
 
 	-- Try to reconnect
 	self:pollingConnect()
-end
-
--- Utility methods
-local robloxJSONDep = nil
-local luneJSONDep = nil
-function encodeJSON(data)
-	if isRoblox then
-		if robloxJSONDep == nil then robloxJSONDep = game:GetService("HttpService") end
-		return robloxJSONDep:JSONEncode(data)
-	else
-		if luneJSONDep == nil then luneJSONDep = require("@lune/serde") end
-		return luneJSONDep.encode("json", data)
-	end
-end
-
-function decodeJSON(json)
-	if isRoblox then
-		if robloxJSONDep == nil then robloxJSONDep = game:GetService("HttpService") end
-		return robloxJSONDep:JSONDecode(json)
-	else
-		if luneJSONDep == nil then luneJSONDep = require("@lune/serde") end
-		return luneJSONDep.decode("json", json)
-	end
 end
 
 return SocketIO

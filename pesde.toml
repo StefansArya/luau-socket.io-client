@@ -1,5 +1,7 @@
-name = "stefansarya/luau-socket.io-client"
-version = "0.1.0"
+name = "stefansarya/socketio_client"
+description = "Simple library for connecting to Socket.io server for Roblox and Lune environment."
+repository = "https://github.com/StefansArya/luau-socket.io-client"
+version = "0.1.1"
 authors = ["stefansarya"]
 license = "MIT"
 includes = [
@@ -10,8 +12,9 @@ includes = [
 ]
 
 [target]
-environment = "luau"
+environment = "roblox"
 lib = "dist/socketio.lua"
+build_files = ["dist"]
 
 [indices]
 default = "https://github.com/pesde-pkg/index"

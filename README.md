@@ -2,6 +2,8 @@
 
 A Socket.IO client implementation for Luau, support both Roblox and Lune environments. This library provides a simple interface for connecting to Socket.IO server.
 
+> Only work for Socket.io version 4.x.x
+
 ## Features
 
 - ✅ **Connection Management**: Connect, disconnect, and automatic reconnection
@@ -42,7 +44,11 @@ local SocketIO = require("path/to/SocketIO")
 local socket = SocketIO.new("http://localhost:3000", {
     maxReconnectionAttempts = 10,
     reconnectionDelay = 1000,
-    reconnectionDelayMax = 5000
+    reconnectionDelayMax = 5000,
+
+    -- Additional config for this library
+    pollingTime = 2000, -- Request for new remote message after 2 sec
+    throttleDataSend = 2000, -- Send all of our queued messages after 2 sec to remote
 })
 
 -- Event handlers
